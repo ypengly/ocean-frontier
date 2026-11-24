@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ocean}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ocean_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ocean_frontier}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ocean}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  simulation:
+    build:
+      context: ./simulation
+      dockerfile: ../infrastructure/docker/simulation.Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["8000:8000"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../infrastructure/docker/backend.Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ocean}:${POSTGRES_PASSWORD:-ocean_dev_password}@postgres:5432/${POSTGRES_DB:-ocean_frontier}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      SIMULATION_URL: http://simulation:8000
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ./database/migrations:/migrations:ro
+      - ./database/seeds:/seeds:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      simulation: { condition: service_started }
+    ports: ["8080:8080"]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../infrastructure/docker/frontend.Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+    depends_on: [backend]
+    ports: ["5173:80"]
+
+volumes:
+  pgdata:
